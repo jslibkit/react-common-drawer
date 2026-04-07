@@ -1,0 +1,56 @@
+﻿{
+  "name": "@jslibkit/common-drawer",
+  "version": "0.1.2",
+  "description": "Imperative, accessible drawer components for React 18 and React 19 with pure CSS and Tailwind styling modes.",
+  "license": "MIT",
+  "sideEffects": [
+    "./dist/drawer.css"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jslibkit/common-drawer.git"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./react18": {
+      "types": "./dist/Drawer.d.ts",
+      "import": "./dist/Drawer.mjs",
+      "require": "./dist/Drawer.js"
+    },
+    "./react19": {
+      "types": "./dist/Drawer.react19.d.ts",
+      "import": "./dist/Drawer.react19.mjs",
+      "require": "./dist/Drawer.react19.js"
+    },
+    "./drawer.css": "./dist/drawer.css"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts && node ./scripts/postbuild.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "jsdom": "^26.1.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
