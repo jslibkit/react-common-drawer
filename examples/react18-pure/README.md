@@ -1,4 +1,4 @@
-﻿# React 18 + Pure Mode
+# React 18 + Pure Mode
 
 Use this when you want the package CSS and the lowest setup cost.
 
@@ -10,5 +10,5 @@ Files in this folder:
 Install note:
 
 ```tsx
-import '@jslibkit/common-drawer/drawer.css'
+import '@jslibkit/react-common-drawer/drawer.css'
 ```

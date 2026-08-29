@@ -1,6 +1,6 @@
-﻿{
+{
   "name": "@jslibkit/react-common-drawer",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "description": "Imperative, accessible drawer components for React 18 and React 19 with pure CSS and Tailwind styling modes.",
   "license": "MIT",
   "sideEffects": [
@@ -8,7 +8,10 @@
   ],
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "INSTALLATION.md",
+    "UPGRADING.md"
   ],
   "repository": {
     "type": "git",
@@ -17,23 +20,56 @@
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "react18": ["./dist/Drawer.d.ts"],
+      "react19": ["./dist/Drawer.react19.d.ts"],
+      "headless": ["./dist/DrawerHeadless.d.ts"]
+    }
+  },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     },
     "./react18": {
-      "types": "./dist/Drawer.d.ts",
-      "import": "./dist/Drawer.mjs",
-      "require": "./dist/Drawer.js"
+      "import": {
+        "types": "./dist/Drawer.d.mts",
+        "default": "./dist/Drawer.mjs"
+      },
+      "require": {
+        "types": "./dist/Drawer.d.ts",
+        "default": "./dist/Drawer.js"
+      }
     },
     "./react19": {
-      "types": "./dist/Drawer.react19.d.ts",
-      "import": "./dist/Drawer.react19.mjs",
-      "require": "./dist/Drawer.react19.js"
+      "import": {
+        "types": "./dist/Drawer.react19.d.mts",
+        "default": "./dist/Drawer.react19.mjs"
+      },
+      "require": {
+        "types": "./dist/Drawer.react19.d.ts",
+        "default": "./dist/Drawer.react19.js"
+      }
     },
-    "./drawer.css": "./dist/drawer.css"
+    "./headless": {
+      "import": {
+        "types": "./dist/DrawerHeadless.d.mts",
+        "default": "./dist/DrawerHeadless.mjs"
+      },
+      "require": {
+        "types": "./dist/DrawerHeadless.d.ts",
+        "default": "./dist/DrawerHeadless.js"
+      }
+    },
+    "./drawer.css": "./dist/drawer.css",
+    "./package.json": "./package.json"
   },
   "peerDependencies": {
     "react": ">=18",

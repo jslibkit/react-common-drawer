@@ -1,18 +1,20 @@
-﻿import React, { forwardRef, type ReactNode } from 'react'
+import React, { forwardRef, useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  applyBackgroundInert,
   resolvePortalTarget,
   useDrawerController,
   type DialogA11yProps,
   type DrawerHandle,
   type DrawerLayerBase,
 } from './DrawerCore.shared'
+import { resolveDrawerPlacement, type DrawerPlacement, type ResolvedDrawerPlacement } from './DrawerView.shared'
 
 export interface HeadlessDrawerLayer extends DrawerLayerBase<string> {}
 
 export interface BackdropRenderProps {
   visible: boolean
-  onClick: () => void
+  onClick: (() => void) | undefined
   transitionMs: number
 }
 
@@ -20,6 +22,7 @@ export interface PanelRenderProps {
   visible: boolean
   layer: HeadlessDrawerLayer
   transitionMs: number
+  placement: ResolvedDrawerPlacement
   children: ReactNode
   panelRef: (node: HTMLElement | null) => void
   dialogProps: DialogA11yProps
@@ -62,6 +65,14 @@ export interface HeadlessDrawerProps {
   CloseIcon?: ReactNode
   BreadcrumbSeparator?: ReactNode
   portalTarget?: Element | null
+  /** Which edge the drawer slides in from. Default 'end' (right in LTR, left in RTL). */
+  placement?: DrawerPlacement
+  /** Close (pop) when Escape is pressed. Default true. */
+  closeOnEscape?: boolean
+  /** Close when the backdrop is clicked. Default true. */
+  closeOnBackdrop?: boolean
+  /** Apply `inert` to background content while open. Default true. */
+  inertBackground?: boolean
 }
 
 const DefaultBackIcon = (
@@ -129,6 +140,7 @@ function DefaultPanel({
   visible,
   layer,
   transitionMs,
+  placement,
   children,
   panelRef,
   dialogProps,
@@ -138,6 +150,7 @@ function DefaultPanel({
       {...dialogProps}
       ref={panelRef}
       data-drawer-panel=""
+      data-placement={placement}
       data-size={layer.size ?? 'md'}
       data-visible={String(visible)}
       style={{ transition: `translate ${transitionMs}ms` }}
@@ -226,6 +239,10 @@ export const HeadlessDrawer = forwardRef<DrawerHandle<HeadlessDrawerLayer>, Head
       CloseIcon = DefaultCloseIcon,
       BreadcrumbSeparator = DefaultBreadcrumbSeparator,
       portalTarget,
+      placement = 'end',
+      closeOnEscape = true,
+      closeOnBackdrop = true,
+      inertBackground = true,
     },
     ref,
   ) {
@@ -242,38 +259,60 @@ export const HeadlessDrawer = forwardRef<DrawerHandle<HeadlessDrawerLayer>, Head
       close,
       pop,
       navigateTo,
-    } = useDrawerController<HeadlessDrawerLayer>(transitionMs, ref)
+    } = useDrawerController<HeadlessDrawerLayer>(transitionMs, ref, { closeOnEscape })
+
+    const rootNodeRef = useRef<HTMLDivElement | null>(null)
+
+    useEffect(() => {
+      if (!inertBackground || !shouldRender) {
+        return
+      }
+
+      const rootNode = rootNodeRef.current
+      if (!rootNode || !rootNode.parentElement) {
+        return
+      }
+
+      return applyBackgroundInert(rootNode.parentElement, rootNode)
+    }, [inertBackground, shouldRender])
 
     const mountTarget = resolvePortalTarget(portalTarget)
     if (!shouldRender || !top || !mountTarget) {
       return null
     }
 
-    const backdropElement = renderBackdrop
-      ? renderBackdrop({ visible, onClick: close, transitionMs })
-      : <DefaultBackdrop visible={visible} onClick={close} transitionMs={transitionMs} />
+    const resolvedPlacement = resolveDrawerPlacement(placement)
+    const backdropClick = closeOnBackdrop ? close : undefined
 
-    const headerElement = renderHeader
-      ? renderHeader({
-          title: top.title,
-          titleId,
-          canGoBack,
-          onBack: pop,
-          onClose: close,
-          BackIcon,
-          CloseIcon,
-        })
-      : (
-          <DefaultHeader
-            title={top.title}
-            titleId={titleId}
-            canGoBack={canGoBack}
-            onBack={pop}
-            onClose={close}
-            BackIcon={BackIcon}
-            CloseIcon={CloseIcon}
-          />
+    const backdropElement = renderBackdrop
+      ? renderBackdrop({ visible, onClick: backdropClick, transitionMs })
+      : <DefaultBackdrop visible={visible} onClick={backdropClick} transitionMs={transitionMs} />
+
+    const headerElement = (top.showHeader ?? true)
+      ? (
+          renderHeader
+            ? renderHeader({
+                title: top.title,
+                titleId,
+                canGoBack,
+                onBack: pop,
+                onClose: close,
+                BackIcon,
+                CloseIcon,
+              })
+            : (
+                <DefaultHeader
+                  title={top.title}
+                  titleId={titleId}
+                  canGoBack={canGoBack}
+                  onBack={pop}
+                  onClose={close}
+                  BackIcon={BackIcon}
+                  CloseIcon={CloseIcon}
+                />
+              )
         )
+      : null
 
     const breadcrumbElement = stack.length > 1
       ? (
@@ -317,6 +356,7 @@ export const HeadlessDrawer = forwardRef<DrawerHandle<HeadlessDrawerLayer>, Head
           visible,
           layer: top,
           transitionMs,
+          placement: resolvedPlacement,
           children: panelChildren,
           panelRef,
           dialogProps,
@@ -326,6 +366,7 @@ export const HeadlessDrawer = forwardRef<DrawerHandle<HeadlessDrawerLayer>, Head
             visible={visible}
             layer={top}
             transitionMs={transitionMs}
+            placement={resolvedPlacement}
             panelRef={panelRef}
             dialogProps={dialogProps}
           >
@@ -334,7 +375,10 @@ export const HeadlessDrawer = forwardRef<DrawerHandle<HeadlessDrawerLayer>, Head
         )
 
     return createPortal(
-      <div data-drawer-root="">{backdropElement}{panelElement}</div>,
+      <div ref={rootNodeRef} data-drawer-root="" data-placement={resolvedPlacement}>
+        {backdropElement}
+        {panelElement}
+      </div>,
       mountTarget,
     )
   },

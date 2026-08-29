@@ -1,4 +1,4 @@
-﻿# React 18 + Tailwind Mode
+# React 18 + Tailwind Mode
 
 Use this when you want Tailwind classes and a local theme object that Tailwind can scan.
 
