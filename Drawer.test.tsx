@@ -1,4 +1,4 @@
-﻿import React, { createRef } from 'react'
+import React, { createRef } from 'react'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CommonDrawer, type DrawerLayer } from './Drawer'
@@ -153,5 +153,225 @@ describe('CommonDrawer', () => {
 
     expect(screen.queryByText('No header')).toBeNull()
     expect(screen.getByText('Body only')).not.toBeNull()
+  })
+
+  it('closes on Escape by default', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    render(<CommonDrawer ref={ref} />)
+    openDrawer(ref, { title: 'Esc', content: <button type="button">Body</button> })
+
+    act(() => {
+      fireEvent.keyDown(document, { key: 'Escape' })
+      vi.advanceTimersByTime(TRANSITION_MS)
+    })
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('ignores Escape when closeOnEscape is false or during IME composition', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    const { rerender } = render(<CommonDrawer ref={ref} closeOnEscape={false} />)
+    openDrawer(ref, { title: 'Esc off', content: <button type="button">Body</button> })
+
+    act(() => {
+      fireEvent.keyDown(document, { key: 'Escape' })
+      vi.advanceTimersByTime(TRANSITION_MS)
+    })
+
+    expect(screen.getByRole('dialog')).not.toBeNull()
+
+    rerender(<CommonDrawer ref={ref} />)
+
+    act(() => {
+      fireEvent.keyDown(document, { key: 'Escape', isComposing: true })
+      vi.advanceTimersByTime(TRANSITION_MS)
+    })
+
+    expect(screen.getByRole('dialog')).not.toBeNull()
+  })
+
+  it('closes on backdrop click unless closeOnBackdrop is false', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    const { rerender } = render(<CommonDrawer ref={ref} closeOnBackdrop={false} />)
+    openDrawer(ref, { title: 'Backdrop', content: <button type="button">Body</button> })
+
+    act(() => {
+      fireEvent.click(document.querySelector('[data-drawer-backdrop]')!)
+      vi.advanceTimersByTime(TRANSITION_MS)
+    })
+
+    expect(screen.getByRole('dialog')).not.toBeNull()
+
+    rerender(<CommonDrawer ref={ref} />)
+
+    act(() => {
+      fireEvent.click(document.querySelector('[data-drawer-backdrop]')!)
+      vi.advanceTimersByTime(TRANSITION_MS)
+    })
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('supports two pops in the same tick', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    render(<CommonDrawer ref={ref} />)
+    openDrawer(ref, { title: 'Root', content: <span>root</span> })
+    act(() => {
+      ref.current?.push({ title: 'Second', content: <span>second</span> })
+      ref.current?.push({ title: 'Third', content: <span>third</span> })
+      vi.runAllTimers()
+    })
+
+    act(() => {
+      ref.current?.pop()
+      ref.current?.pop()
+      vi.runAllTimers()
+    })
+
+    expect(screen.getByRole('dialog', { name: 'Root' })).not.toBeNull()
+    expect(document.querySelector('[data-drawer-breadcrumb]')).toBeNull()
+  })
+
+  it('fires onClose for a popped layer and for layers removed by breadcrumb navigation', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+    const secondClose = vi.fn()
+    const thirdClose = vi.fn()
+
+    render(<CommonDrawer ref={ref} />)
+    openDrawer(ref, { title: 'Root', content: <span>root</span> })
+    act(() => {
+      ref.current?.push({ title: 'Second', content: <span>second</span>, onClose: secondClose })
+      ref.current?.push({ title: 'Third', content: <span>third</span>, onClose: thirdClose })
+      vi.runAllTimers()
+    })
+
+    act(() => {
+      ref.current?.pop()
+      vi.runAllTimers()
+    })
+
+    expect(thirdClose).toHaveBeenCalledTimes(1)
+    expect(secondClose).not.toHaveBeenCalled()
+
+    act(() => {
+      ref.current?.push({ title: 'Third again', content: <span>third</span>, onClose: thirdClose })
+      vi.runAllTimers()
+    })
+
+    // Jump back to root: both remaining upper layers are dismissed.
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Root' }))
+      vi.runAllTimers()
+    })
+
+    expect(thirdClose).toHaveBeenCalledTimes(2)
+    expect(secondClose).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog', { name: 'Root' })).not.toBeNull()
+  })
+
+  it('renders placement on root and panel, defaulting to right in LTR', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    const { rerender } = render(<CommonDrawer ref={ref} />)
+    openDrawer(ref, { title: 'Placement', content: <span>body</span> })
+
+    expect(document.querySelector('[data-drawer-panel]')?.getAttribute('data-placement')).toBe('right')
+
+    rerender(<CommonDrawer ref={ref} placement="bottom" />)
+    expect(document.querySelector('[data-drawer-panel]')?.getAttribute('data-placement')).toBe('bottom')
+    expect(document.querySelector('[data-drawer-root]')?.getAttribute('data-placement')).toBe('bottom')
+  })
+
+  it('marks background content inert while open and restores it after close', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    const { container } = render(
+      <>
+        <button type="button">Background</button>
+        <CommonDrawer ref={ref} />
+      </>,
+    )
+
+    openDrawer(ref, { title: 'Inert', content: <button type="button">Body</button> })
+
+    // The app container (sibling of the portalled drawer root) becomes inert.
+    expect(container.hasAttribute('inert')).toBe(true)
+
+    act(() => {
+      ref.current?.close()
+      vi.runAllTimers()
+    })
+
+    expect(container.hasAttribute('inert')).toBe(false)
+  })
+
+  it('moves focus into the new top layer after push', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    render(<CommonDrawer ref={ref} />)
+    openDrawer(ref, { title: 'Root', content: <button type="button">Root action</button> })
+
+    act(() => {
+      ref.current?.push({
+        title: 'Child',
+        content: (
+          <div>
+            <p>Some text first</p>
+            <button type="button">Child action</button>
+          </div>
+        ),
+      })
+      vi.runAllTimers()
+    })
+
+    expect(document.activeElement?.textContent).toContain('Child action')
+  })
+
+  it('honors a layer initialFocus selector', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    render(<CommonDrawer ref={ref} />)
+    openDrawer(ref, {
+      title: 'Initial focus',
+      initialFocus: '[data-autofocus]',
+      content: (
+        <div>
+          <button type="button">First</button>
+          <button type="button" data-autofocus="">
+            Preferred
+          </button>
+        </div>
+      ),
+    })
+
+    expect(document.activeElement?.textContent).toBe('Preferred')
+  })
+
+  it('compensates body padding for the scrollbar while locked', () => {
+    const ref = createRef<DrawerHandle<DrawerLayer>>()
+
+    const clientWidthSpy = vi
+      .spyOn(document.documentElement, 'clientWidth', 'get')
+      .mockReturnValue(window.innerWidth - 17)
+
+    render(<CommonDrawer ref={ref} />)
+    openDrawer(ref, { title: 'Scroll lock', content: <span>body</span> })
+
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(document.body.style.paddingRight).toBe('17px')
+
+    act(() => {
+      ref.current?.close()
+      vi.runAllTimers()
+    })
+
+    expect(document.body.style.overflow).toBe('')
+    expect(document.body.style.paddingRight).toBe('')
+
+    clientWidthSpy.mockRestore()
   })
 })

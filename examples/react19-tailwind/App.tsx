@@ -1,4 +1,4 @@
-﻿import { CommonDrawer } from '@jslibkit/common-drawer/react19'
+import { CommonDrawer } from '@jslibkit/react-common-drawer/react19'
 import { drawer } from './drawerRegistry'
 import { drawerTheme } from './drawerTheme'
 
@@ -40,7 +40,7 @@ export function App() {
         Open billing drawer
       </button>
 
-      <CommonDrawer ref={drawer.ref} cssMode="tailwind" theme={drawerTheme} />
+      <CommonDrawer ref={drawer.ref} cssMode="tailwind" classNames={drawerTheme} />
     </>
   )
 }

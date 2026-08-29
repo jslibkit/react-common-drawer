@@ -1,18 +1,28 @@
-# @jslibkit/common-drawer
+# @jslibkit/react-common-drawer
 
 A practical drawer library for React with one job: mount once, keep a ref somewhere sensible, and open drawers from wherever you need them.
 
 It supports:
 
-- React 18 via `@jslibkit/common-drawer/react18`
-- React 19 via `@jslibkit/common-drawer/react19`
+- React 18 via `@jslibkit/react-common-drawer/react18`
+- React 19 via `@jslibkit/react-common-drawer/react19`
+- a headless build via `@jslibkit/react-common-drawer/headless`
 - `pure` styling mode backed by the package CSS file
-- `tailwind` styling mode backed by a theme object you create in your app
+- `tailwind` styling mode backed by a class-name object you create in your app
 - nested drawer layers through `open`, `push`, `pop`, and `close`
+- placements: `end` (default), `start`, `left`, `right`, `top`, `bottom` — `start`/`end` follow the document direction, so RTL apps work without configuration
 - optional footer and optional header per layer
 - root-level mounting with a shared registry helper
+- focus trapping, focus restoration, per-layer `initialFocus`, background `inert`, scroll locking with scrollbar-width compensation, and `prefers-reduced-motion` support
 
 This README is intentionally detailed. It is written for the future when we forget how this worked after two weeks, not for internet applause.
+
+## Guides
+
+- [INSTALLATION.md](INSTALLATION.md) — step-by-step setup for a brand-new project, from `node -v` to a working drawer.
+- [UPGRADING.md](UPGRADING.md) — step-by-step upgrade from 1.x to 2.0.0, including all three breaking changes.
+- [CHANGELOG.md](CHANGELOG.md) — what changed in each version.
+- [RELEASING.md](RELEASING.md) — maintainer guide for publishing to npm and GitHub (kept in the repo, not shipped in the package).
 
 ## Mental model
 
@@ -30,13 +40,15 @@ If you also use `push()`, it behaves like a stacked workflow drawer.
 
 Public entrypoints:
 
-- `@jslibkit/common-drawer`
-  Exposes shared types, theme helpers, and the drawer registry helper.
-- `@jslibkit/common-drawer/react18`
-  Exposes the React 18 drawer component.
-- `@jslibkit/common-drawer/react19`
-  Exposes the React 19 drawer component.
-- `@jslibkit/common-drawer/drawer.css`
+- `@jslibkit/react-common-drawer`
+  Exposes shared types, class-name helpers, and the drawer registry helper.
+- `@jslibkit/react-common-drawer/react18`
+  Exposes the React 18 drawer component (`forwardRef`).
+- `@jslibkit/react-common-drawer/react19`
+  Exposes the React 19 drawer component (`ref` as a prop).
+- `@jslibkit/react-common-drawer/headless`
+  Exposes `HeadlessDrawer`: same behavior engine, zero styling, render-prop slots.
+- `@jslibkit/react-common-drawer/drawer.css`
   CSS file used by `cssMode="pure"`.
 
 Useful exports from the root package:
@@ -47,29 +59,30 @@ Useful exports from the root package:
 - `TAILWIND_DRAWER_CLASS_NAMES`
 - `DrawerHandle`
 - `DrawerSize`
+- `DrawerPlacement`
 
 ## Installation
 
 ```bash
-npm install @jslibkit/common-drawer react react-dom
+npm install @jslibkit/react-common-drawer react react-dom
 ```
 
 If you use `cssMode="pure"`, import the CSS once:
 
 ```tsx
-import '@jslibkit/common-drawer/drawer.css'
+import '@jslibkit/react-common-drawer/drawer.css'
 ```
 
-If you use `cssMode="tailwind"`, do not import `drawer.css`. Instead, create a Tailwind theme object in your application source and pass it to the component.
+If you use `cssMode="tailwind"`, do not import `drawer.css`. Instead, create a class-name object in your application source and pass it to the component.
 
 ## Quick start
 
 ### React 18 + pure mode
 
 ```tsx
-import '@jslibkit/common-drawer/drawer.css'
-import { CommonDrawer } from '@jslibkit/common-drawer/react18'
-import { createDrawerRegistry, type DrawerLayer } from '@jslibkit/common-drawer'
+import '@jslibkit/react-common-drawer/drawer.css'
+import { CommonDrawer } from '@jslibkit/react-common-drawer/react18'
+import { createDrawerRegistry, type DrawerLayer } from '@jslibkit/react-common-drawer'
 
 const drawer = createDrawerRegistry<DrawerLayer>()
 
@@ -107,7 +120,7 @@ The drawer is not intended to be sprinkled across the tree. Mount it once, near 
 The registry helper gives you a stable place to store and reuse the imperative handle.
 
 ```ts
-import { createDrawerRegistry, type DrawerLayer } from '@jslibkit/common-drawer'
+import { createDrawerRegistry, type DrawerLayer } from '@jslibkit/react-common-drawer'
 
 export const drawer = createDrawerRegistry<DrawerLayer>()
 ```
@@ -135,10 +148,26 @@ drawer.open({
 | --- | --- | --- | --- |
 | `title` | `string` | required | Used for the header title and dialog labelling. |
 | `content` | `ReactNode` | required | Main drawer body. |
-| `size` | `'sm' \| 'md' \| 'lg' \| 'xl' \| 'full'` | `'md'` | Width preset. |
+| `size` | `'sm' \| 'md' \| 'lg' \| 'xl' \| 'full'` | `'md'` | Width preset (height preset for `top`/`bottom` placements). |
 | `footer` | `ReactNode` | `undefined` | Optional footer section. |
-| `showHeader` | `boolean` | `true` | Hides the entire header when `false`. |
-| `onClose` | `() => void` | `undefined` | Runs once when the drawer fully closes. |
+| `showHeader` | `boolean` | `true` | Hides the entire header when `false` (the dialog is then labelled via `aria-label`). |
+| `onClose` | `() => void` | `undefined` | Runs once when this layer is dismissed — popped, removed via breadcrumb navigation, replaced by `open()`, or when the whole drawer closes. |
+| `initialFocus` | `string` | `undefined` | CSS selector, resolved inside the panel, that receives focus when this layer becomes the top layer. |
+| `meta` | `unknown` | `undefined` | Free slot for app-specific data attached to a layer. |
+
+### `CommonDrawer` props
+
+| Prop | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `transitionMs` | `number` | `280` | Animation duration. |
+| `portalTarget` | `Element \| null` | `document.body` | Where the drawer portals to. |
+| `cssMode` | `'pure' \| 'tailwind'` | `'pure'` | Which class-name preset to start from. |
+| `classNames` | `Partial<CommonDrawerClassNames>` | `undefined` | Per-slot class overrides (see the theme system below). |
+| `placement` | `'start' \| 'end' \| 'left' \| 'right' \| 'top' \| 'bottom'` | `'end'` | Edge the drawer slides in from. `start`/`end` respect the document direction (RTL-aware). |
+| `closeOnEscape` | `boolean` | `true` | Escape pops the top layer (closes at root). Ignored during IME composition and when a nested widget already handled the key. |
+| `closeOnBackdrop` | `boolean` | `true` | Clicking the backdrop closes the drawer. |
+| `inertBackground` | `boolean` | `true` | Applies `inert` to background content while the drawer is open. |
+| `zIndex` | `number` | preset value (`1000`) | Overrides the z-index of the drawer root. |
 
 ### `DrawerHandle<TLayer>`
 
@@ -148,6 +177,8 @@ drawer.open({
 | `push` | `(layer: TLayer) => void` | Add a nested layer on top. |
 | `pop` | `() => void` | Remove one layer, or close at root. |
 | `close` | `() => void` | Close the whole drawer. |
+
+Rapid sequences are safe: `open()` followed by `push()` in the same tick stacks correctly, two `pop()` calls in one tick pop two layers, and calling `open()`/`push()` while the drawer is mid-close reopens it cleanly (the interrupted layers still get their `onClose`).
 
 ### `DrawerRegistry<TLayer>`
 
@@ -177,12 +208,12 @@ Pros:
 Requirements:
 
 ```tsx
-import '@jslibkit/common-drawer/drawer.css'
+import '@jslibkit/react-common-drawer/drawer.css'
 ```
 
 Optional override path:
 
-You can still pass `theme` in pure mode if you want to replace specific class names with your own CSS module or CSS class contract.
+You can still pass `classNames` in pure mode if you want to replace specific class names with your own CSS module or CSS class contract.
 
 ### `cssMode="tailwind"`
 
@@ -190,10 +221,10 @@ Use this when you want the structure and behavior from the component, but want T
 
 Important:
 
-Tailwind mode should be paired with a theme object created in your own app source. That is the safest way to ensure Tailwind sees the classes during scanning.
+Tailwind mode should be paired with a class-name object created in your own app source. That is the safest way to ensure Tailwind sees the classes during scanning.
 
 ```ts
-import { createDrawerClasses } from '@jslibkit/common-drawer'
+import { createDrawerClasses } from '@jslibkit/react-common-drawer'
 
 export const drawerTheme = createDrawerClasses('tailwind')
 ```
@@ -201,7 +232,7 @@ export const drawerTheme = createDrawerClasses('tailwind')
 Then:
 
 ```tsx
-<CommonDrawer ref={drawer.ref} cssMode="tailwind" theme={drawerTheme} />
+<CommonDrawer ref={drawer.ref} cssMode="tailwind" classNames={drawerTheme} />
 ```
 
 ## Theme system
@@ -217,10 +248,10 @@ These are useful as references, or as a base when you want to inspect or extend 
 
 ### `createDrawerClasses(mode, overrides)`
 
-This helper returns a complete theme object.
+This helper returns a complete class-name object.
 
 ```ts
-import { createDrawerClasses } from '@jslibkit/common-drawer'
+import { createDrawerClasses } from '@jslibkit/react-common-drawer'
 
 export const drawerTheme = createDrawerClasses('tailwind', {
   panelLg: 'max-w-3xl',
@@ -249,6 +280,8 @@ export const drawerTheme = createDrawerClasses('tailwind', {
 - `content`
 - `footer`
 
+Placement is expressed through `data-placement` attributes on the root and panel elements, so both the pure CSS file and the Tailwind preset style all four placements out of one slot set.
+
 ## Tailwind setup
 
 Tailwind mode only works when Tailwind scans the drawer class strings.
@@ -259,7 +292,7 @@ Dependencies in `node_modules` are ignored by default. Add the package as a sour
 
 ```css
 @import "tailwindcss";
-@source "../node_modules/@jslibkit/common-drawer";
+@source "../node_modules/@jslibkit/react-common-drawer";
 ```
 
 Adjust the relative path to match your project.
@@ -274,22 +307,40 @@ Add the package build output to the `content` array in `tailwind.config.js` or `
 export default {
   content: [
     './src/**/*.{js,ts,jsx,tsx}',
-    './node_modules/@jslibkit/common-drawer/dist/**/*.{js,mjs}',
+    './node_modules/@jslibkit/react-common-drawer/dist/**/*.{js,mjs}',
   ],
 }
 ```
 
 Again, if your local `drawerTheme.ts` file lives inside your app source, Tailwind will also detect the classes there.
 
+## Headless mode
+
+`HeadlessDrawer` reuses the exact same behavior engine (stack, focus trap, scroll lock, Escape handling, `inert`) but renders unstyled elements with `data-drawer-*` attributes, and every section can be replaced through render props:
+
+```tsx
+import { HeadlessDrawer } from '@jslibkit/react-common-drawer/headless'
+
+<HeadlessDrawer
+  ref={drawer.ref}
+  renderPanel={({ dialogProps, panelRef, visible, children }) => (
+    <aside {...dialogProps} ref={panelRef} data-open={visible} className="my-panel">
+      {children}
+    </aside>
+  )}
+/>
+```
+
+Available render props: `renderBackdrop`, `renderPanel`, `renderHeader`, `renderBreadcrumb`, `renderContent`, `renderFooter`, plus `BackIcon`, `CloseIcon`, and `BreadcrumbSeparator` overrides. `placement`, `closeOnEscape`, `closeOnBackdrop`, and `inertBackground` work the same as on `CommonDrawer`.
+
 ## Behavior details
 
 ### Focus handling
 
-When the drawer opens:
-
-- focus moves into the drawer
-- Tab navigation stays inside the drawer
-- focus is restored when the drawer closes
+- opening moves focus into the drawer (honoring the layer's `initialFocus` selector when given)
+- pushing, popping, and breadcrumb navigation move focus into the newly revealed top layer
+- Tab navigation stays inside the drawer; when several drawers are mounted, only the top-most open one traps keys
+- focus is restored to the original trigger when the drawer closes, after background `inert` has been lifted
 
 ### Close behavior
 
@@ -297,27 +348,35 @@ The drawer can close through:
 
 - `close()`
 - root-level `pop()`
-- backdrop click
-- `Escape`
+- backdrop click (unless `closeOnBackdrop={false}`)
+- `Escape` (unless `closeOnEscape={false}`)
 
-`onClose` runs once when the drawer fully closes.
+`onClose` is a per-layer dismissal callback: every layer receives it exactly once when it leaves the stack, whatever the reason (pop, breadcrumb navigation, replacement via `open()`, or full close). When several layers are dismissed at once they fire top-most first.
 
 ### Scroll locking
 
-The drawer locks `document.body` scroll while open and restores the previous inline value when closing.
+The drawer locks `document.body` scroll while open, compensates `padding-right` for the removed scrollbar so the page does not shift, and restores the previous inline values when closing. Locking is refcounted across drawer instances.
+
+### Background isolation
+
+While open, sibling elements of the drawer (inside the portal target) get the `inert` attribute, so background content is unreachable by keyboard, screen readers, and clicks. Disable with `inertBackground={false}`. The bookkeeping is refcounted, so overlapping drawers restore state correctly.
+
+### State in lower layers
+
+Only the top layer's content is mounted. When you `push()`, the layer below unmounts, and its local component state is gone by the time you `pop()` back. Keep form state that must survive stacking outside the layer content (a store, context, or the `meta` slot).
 
 ### Animation
 
-Both modes animate.
+Both modes animate; both respect `prefers-reduced-motion` and skip transitions for users who ask for that.
 
 Pure mode:
 
-- uses the packaged CSS transitions
+- uses the packaged CSS transitions, keyed off `data-placement` and `data-visible`
 
 Tailwind mode:
 
 - backdrop fades using `transition-opacity`
-- panel slides using `translate-x-full` and `data-[visible=true]:translate-x-0`
+- panel slides using placement-aware `data-[placement=...]` translate utilities
 - duration follows `transitionMs`
 
 ## Common patterns
@@ -355,16 +414,22 @@ drawer.open({
 
 ```tsx
 drawer.open({
-  title: 'Preview',
+  title: 'Preview', // still used as the dialog's accessible name
   showHeader: false,
   content: <ImageViewer />,
 })
 ```
 
+### A bottom sheet
+
+```tsx
+<CommonDrawer ref={drawer.ref} placement="bottom" />
+```
+
 ### A bigger Tailwind panel
 
 ```ts
-import { createDrawerClasses } from '@jslibkit/common-drawer'
+import { createDrawerClasses } from '@jslibkit/react-common-drawer'
 
 export const drawerTheme = createDrawerClasses('tailwind', {
   panelLg: 'max-w-4xl',
@@ -376,12 +441,20 @@ export const drawerTheme = createDrawerClasses('tailwind', {
 
 The repository includes example folders for all supported combinations:
 
-- [examples/react18-pure/README.md](/D:/Projects/Bun/drawer/examples/react18-pure/README.md)
-- [examples/react18-tailwind/README.md](/D:/Projects/Bun/drawer/examples/react18-tailwind/README.md)
-- [examples/react19-pure/README.md](/D:/Projects/Bun/drawer/examples/react19-pure/README.md)
-- [examples/react19-tailwind/README.md](/D:/Projects/Bun/drawer/examples/react19-tailwind/README.md)
+- [examples/react18-pure/README.md](examples/react18-pure/README.md)
+- [examples/react18-tailwind/README.md](examples/react18-tailwind/README.md)
+- [examples/react19-pure/README.md](examples/react19-pure/README.md)
+- [examples/react19-tailwind/README.md](examples/react19-tailwind/README.md)
 
 These are intentionally small reference examples, not a festival of clever abstractions.
+
+## Migrating from 1.x
+
+- The package README previously referred to a `theme` prop; the real prop is `classNames` and the docs now agree.
+- `onClose` now fires for every dismissed layer (pop, breadcrumb navigation, replacement, full close), not just for whichever layer was on top when the drawer closed. If you relied on lower layers being skipped, gate on your own state.
+- The drawer applies `inert` to background content by default; pass `inertBackground={false}` for the old behavior.
+- Root and panel elements now carry `data-placement`; custom CSS written against v1 selectors keeps working for the default right-side placement as long as it does not assume the old fixed `translate` values on the bare `.common-drawer__panel` class.
+- New `use client` banners mean the package works out of the box in RSC environments.
 
 ## Development notes
 

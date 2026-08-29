@@ -1,4 +1,4 @@
-﻿import { CommonDrawer } from '@jslibkit/common-drawer/react18'
+import { CommonDrawer } from '@jslibkit/react-common-drawer/react18'
 import { drawer } from './drawerRegistry'
 import { drawerTheme } from './drawerTheme'
 
@@ -54,7 +54,7 @@ export function App() {
         Open drawer
       </button>
 
-      <CommonDrawer ref={drawer.ref} cssMode="tailwind" theme={drawerTheme} />
+      <CommonDrawer ref={drawer.ref} cssMode="tailwind" classNames={drawerTheme} />
     </>
   )
 }

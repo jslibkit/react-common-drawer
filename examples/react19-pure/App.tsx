@@ -1,5 +1,5 @@
-﻿import '@jslibkit/common-drawer/drawer.css'
-import { CommonDrawer } from '@jslibkit/common-drawer/react19'
+import '@jslibkit/react-common-drawer/drawer.css'
+import { CommonDrawer } from '@jslibkit/react-common-drawer/react19'
 import { drawer } from './drawerRegistry'
 
 function MediaPreview() {

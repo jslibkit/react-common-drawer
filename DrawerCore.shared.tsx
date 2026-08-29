@@ -1,4 +1,4 @@
-﻿import {
+import {
   useCallback,
   useEffect,
   useId,
@@ -12,13 +12,26 @@
 
 export type DrawerSize = 'sm' | 'md' | 'lg' | 'xl' | 'full'
 
-export interface DrawerLayerBase<TSize = DrawerSize> {
+export interface DrawerLayerBase<TSize = DrawerSize, TMeta = unknown> {
   title: string
   content: ReactNode
   size?: TSize
   footer?: ReactNode
   showHeader?: boolean
+  /**
+   * Called once when this layer is dismissed for any reason:
+   * popped, removed by breadcrumb navigation, replaced by `open()`,
+   * or when the whole drawer closes.
+   */
   onClose?: () => void
+  /**
+   * CSS selector resolved inside the panel. When this layer becomes the
+   * top layer, focus moves to the first element matching this selector
+   * (falling back to the first focusable element, then the panel itself).
+   */
+  initialFocus?: string
+  /** Free slot for app-specific data attached to a layer. */
+  meta?: TMeta
 }
 
 export interface DrawerHandle<TLayer> {
@@ -40,12 +53,18 @@ export interface DrawerRegistry<TLayer> {
 export interface DialogA11yProps {
   role: 'dialog'
   'aria-modal': true
-  'aria-labelledby': string
+  'aria-labelledby'?: string
+  'aria-label'?: string
   'aria-describedby': string
   tabIndex: number
 }
 
-export interface DrawerController<TLayer extends DrawerLayerBase<any>> {
+export interface DrawerControllerOptions {
+  /** When false, Escape no longer pops/closes the drawer. Default true. */
+  closeOnEscape?: boolean
+}
+
+export interface DrawerController<TLayer extends DrawerLayerBase<any, any>> {
   stack: TLayer[]
   visible: boolean
   shouldRender: boolean
@@ -76,6 +95,19 @@ const FOCUSABLE_SELECTOR = [
 
 let bodyScrollLockCount = 0
 let previousBodyOverflow = ''
+let previousBodyPaddingRight = ''
+
+/**
+ * Escape/Tab coordination between multiple mounted drawers: only the most
+ * recently opened drawer reacts to Escape and traps Tab.
+ */
+const activeKeyboardOwners: object[] = []
+
+/**
+ * Refcounted `inert` bookkeeping so overlapping drawers (or other callers)
+ * do not clobber each other's background state.
+ */
+const inertRegistry = new Map<Element, { count: number; hadInert: boolean }>()
 
 function isBrowser() {
   return typeof window !== 'undefined' && typeof document !== 'undefined'
@@ -87,8 +119,17 @@ function lockBodyScroll() {
   }
 
   if (bodyScrollLockCount === 0) {
-    previousBodyOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    const body = document.body
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth
+
+    previousBodyOverflow = body.style.overflow
+    previousBodyPaddingRight = body.style.paddingRight
+    body.style.overflow = 'hidden'
+
+    if (scrollbarWidth > 0) {
+      const currentPadding = Number.parseFloat(window.getComputedStyle(body).paddingRight) || 0
+      body.style.paddingRight = `${currentPadding + scrollbarWidth}px`
+    }
   }
 
   bodyScrollLockCount += 1
@@ -98,7 +139,55 @@ function lockBodyScroll() {
 
     if (bodyScrollLockCount === 0) {
       document.body.style.overflow = previousBodyOverflow
+      document.body.style.paddingRight = previousBodyPaddingRight
       previousBodyOverflow = ''
+      previousBodyPaddingRight = ''
+    }
+  }
+}
+
+/**
+ * Makes every sibling of `exclude` inside `container` inert while the drawer
+ * is open, restoring previous state on release. Refcounted so multiple
+ * drawers can overlap safely.
+ */
+export function applyBackgroundInert(container: Element, exclude: Element | null) {
+  if (!isBrowser()) {
+    return () => {}
+  }
+
+  const affected: Element[] = []
+
+  for (const child of Array.from(container.children)) {
+    if (child === exclude || child.tagName === 'SCRIPT' || child.tagName === 'STYLE') {
+      continue
+    }
+
+    const entry = inertRegistry.get(child)
+    if (entry) {
+      entry.count += 1
+    } else {
+      inertRegistry.set(child, { count: 1, hadInert: child.hasAttribute('inert') })
+      child.setAttribute('inert', '')
+    }
+
+    affected.push(child)
+  }
+
+  return () => {
+    for (const child of affected) {
+      const entry = inertRegistry.get(child)
+      if (!entry) {
+        continue
+      }
+
+      entry.count -= 1
+      if (entry.count === 0) {
+        inertRegistry.delete(child)
+        if (!entry.hadInert) {
+          child.removeAttribute('inert')
+        }
+      }
     }
   }
 }
@@ -123,7 +212,15 @@ function getFocusableElements(container: HTMLElement) {
   )
 }
 
-function focusInitialTarget(container: HTMLElement) {
+function focusInitialTarget(container: HTMLElement, initialFocus?: string) {
+  if (initialFocus) {
+    const preferred = container.querySelector<HTMLElement>(initialFocus)
+    if (preferred) {
+      preferred.focus({ preventScroll: true })
+      return
+    }
+  }
+
   const focusable = getFocusableElements(container)
   const target = focusable[0] ?? container
   target.focus({ preventScroll: true })
@@ -177,24 +274,40 @@ function getActiveElement() {
   return activeElement instanceof HTMLElement ? activeElement : null
 }
 
-export function useDrawerController<TLayer extends DrawerLayerBase<any>>(
+export function useDrawerController<TLayer extends DrawerLayerBase<any, any>>(
   transitionMs: number,
   ref?: Ref<DrawerHandle<TLayer>>,
+  options?: DrawerControllerOptions,
 ): DrawerController<TLayer> {
   const [stack, setStack] = useState<TLayer[]>([])
   const [visible, setVisible] = useState(false)
   const stackRef = useRef<TLayer[]>([])
+  const visibleRef = useRef(false)
+  const closingRef = useRef(false)
   const panelNodeRef = useRef<HTMLElement | null>(null)
   const timeoutIdsRef = useRef<number[]>([])
   const animationFrameIdsRef = useRef<number[]>([])
   const operationIdRef = useRef(0)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
+  const pendingRestoreRef = useRef<HTMLElement | null>(null)
+  const prevTopRef = useRef<TLayer | null>(null)
+  const closeOnEscapeRef = useRef(true)
   const titleId = useId()
   const contentId = useId()
 
-  useEffect(() => {
-    stackRef.current = stack
-  }, [stack])
+  closeOnEscapeRef.current = options?.closeOnEscape ?? true
+
+  // stackRef/visibleRef are kept in sync SYNCHRONOUSLY (not in an effect) so
+  // that sequential imperative calls in the same tick see fresh state.
+  const updateStack = useCallback((next: TLayer[]) => {
+    stackRef.current = next
+    setStack(next)
+  }, [])
+
+  const updateVisible = useCallback((next: boolean) => {
+    visibleRef.current = next
+    setVisible(next)
+  }, [])
 
   const panelRef = useCallback<RefCallback<HTMLElement>>((node) => {
     panelNodeRef.current = node
@@ -237,10 +350,17 @@ export function useDrawerController<TLayer extends DrawerLayerBase<any>>(
     animationFrameIdsRef.current.push(frameId)
   }, [])
 
+  /** Fires onClose for every layer in `layers`, top-most first. */
+  const dismissLayers = useCallback((layers: TLayer[]) => {
+    for (let index = layers.length - 1; index >= 0; index -= 1) {
+      layers[index].onClose?.()
+    }
+  }, [])
+
   const revealPanel = useCallback(
     (operationId: number) => {
       if (!isBrowser()) {
-        setVisible(true)
+        updateVisible(true)
         return
       }
 
@@ -250,7 +370,7 @@ export function useDrawerController<TLayer extends DrawerLayerBase<any>>(
             return
           }
 
-          setVisible(true)
+          updateVisible(true)
 
           scheduleAnimationFrame(() => {
             if (operationId !== operationIdRef.current) {
@@ -259,111 +379,184 @@ export function useDrawerController<TLayer extends DrawerLayerBase<any>>(
 
             const panel = panelNodeRef.current
             if (panel) {
-              focusInitialTarget(panel)
+              const topLayer = stackRef.current[stackRef.current.length - 1]
+              focusInitialTarget(panel, topLayer?.initialFocus)
             }
           })
         })
       })
     },
-    [scheduleAnimationFrame],
+    [scheduleAnimationFrame, updateVisible],
   )
 
-  const closeLayer = useCallback(
-    (layer: TLayer | null | undefined) => {
-      const operationId = beginOperation()
-      setVisible(false)
+  const finalizeClose = useCallback(
+    (layers: TLayer[]) => {
+      closingRef.current = false
+      // Focus is restored from an effect AFTER the closed drawer commits, so
+      // that background `inert` has already been lifted by then.
+      pendingRestoreRef.current = restoreFocusRef.current
+      restoreFocusRef.current = null
+      updateStack([])
+      dismissLayers(layers)
+    },
+    [dismissLayers, updateStack],
+  )
 
-      if (!isBrowser()) {
-        setStack([])
-        layer?.onClose?.()
-        restoreFocus(restoreFocusRef.current)
-        restoreFocusRef.current = null
+  const close = useCallback(() => {
+    if (closingRef.current || stackRef.current.length === 0) {
+      return
+    }
+
+    const layers = stackRef.current
+    const operationId = beginOperation()
+    closingRef.current = true
+    updateVisible(false)
+
+    if (!isBrowser()) {
+      finalizeClose(layers)
+      return
+    }
+
+    scheduleTimeout(() => {
+      if (operationId !== operationIdRef.current) {
         return
       }
 
-      scheduleTimeout(() => {
-        if (operationId !== operationIdRef.current) {
-          return
-        }
+      finalizeClose(layers)
+    }, transitionMs)
+  }, [beginOperation, finalizeClose, scheduleTimeout, transitionMs, updateVisible])
 
-        setStack([])
-        layer?.onClose?.()
-        restoreFocus(restoreFocusRef.current)
-        restoreFocusRef.current = null
-      }, transitionMs)
+  /**
+   * Reopens with `nextStack` while a close transition is in flight: the old
+   * layers are considered dismissed, the original focus-restore target is
+   * kept, and the panel is revealed again.
+   */
+  const reopenDuringClose = useCallback(
+    (nextStack: TLayer[]) => {
+      const previousLayers = stackRef.current
+      const operationId = beginOperation()
+      closingRef.current = false
+      dismissLayers(previousLayers)
+      updateStack(nextStack)
+      revealPanel(operationId)
     },
-    [beginOperation, scheduleTimeout, transitionMs],
+    [beginOperation, dismissLayers, revealPanel, updateStack],
   )
 
   const open = useCallback(
     (layer: TLayer) => {
-      const operationId = beginOperation()
-      const wasClosed = stackRef.current.length === 0
+      const currentStack = stackRef.current
 
-      if (wasClosed) {
+      if (currentStack.length === 0) {
+        const operationId = beginOperation()
         restoreFocusRef.current = getActiveElement()
-        setStack([layer])
+        updateStack([layer])
         revealPanel(operationId)
         return
       }
 
-      setVisible(false)
+      if (closingRef.current) {
+        reopenDuringClose([layer])
+        return
+      }
+
+      // Drawer is open: animate half-way out, swap the stack, animate back in.
+      const operationId = beginOperation()
+      updateVisible(false)
+
+      if (!isBrowser()) {
+        dismissLayers(currentStack)
+        updateStack([layer])
+        updateVisible(true)
+        return
+      }
+
       scheduleTimeout(() => {
         if (operationId !== operationIdRef.current) {
           return
         }
 
-        setStack([layer])
+        dismissLayers(currentStack)
+        updateStack([layer])
         revealPanel(operationId)
       }, Math.round(transitionMs / 2))
     },
-    [beginOperation, revealPanel, scheduleTimeout, transitionMs],
+    [
+      beginOperation,
+      dismissLayers,
+      reopenDuringClose,
+      revealPanel,
+      scheduleTimeout,
+      transitionMs,
+      updateStack,
+      updateVisible,
+    ],
   )
 
   const push = useCallback(
     (layer: TLayer) => {
-      const operationId = beginOperation()
+      const currentStack = stackRef.current
 
-      if (stackRef.current.length === 0) {
+      if (currentStack.length === 0) {
+        const operationId = beginOperation()
         restoreFocusRef.current = getActiveElement()
-        setStack([layer])
+        updateStack([layer])
         revealPanel(operationId)
         return
       }
 
-      setStack((currentStack) => [...currentStack, layer])
+      if (closingRef.current) {
+        reopenDuringClose([layer])
+        return
+      }
+
+      if (!visibleRef.current) {
+        // The panel is mid-reveal (or mid-replace). Restart the reveal so the
+        // drawer cannot end up mounted but invisible.
+        const operationId = beginOperation()
+        updateStack([...currentStack, layer])
+        revealPanel(operationId)
+        return
+      }
+
+      updateStack([...currentStack, layer])
     },
-    [beginOperation, revealPanel],
+    [beginOperation, reopenDuringClose, revealPanel, updateStack],
   )
 
   const pop = useCallback(() => {
-    const currentStack = stackRef.current
-
-    if (currentStack.length <= 1) {
-      closeLayer(currentStack[0])
+    if (closingRef.current) {
       return
     }
 
-    beginOperation()
-    setStack(currentStack.slice(0, -1))
-  }, [beginOperation, closeLayer])
-
-  const close = useCallback(() => {
     const currentStack = stackRef.current
-    closeLayer(currentStack[currentStack.length - 1])
-  }, [closeLayer])
+
+    if (currentStack.length <= 1) {
+      close()
+      return
+    }
+
+    const popped = currentStack[currentStack.length - 1]
+    updateStack(currentStack.slice(0, -1))
+    popped.onClose?.()
+  }, [close, updateStack])
 
   const navigateTo = useCallback(
     (index: number) => {
+      if (closingRef.current) {
+        return
+      }
+
       const currentStack = stackRef.current
       if (index < 0 || index >= currentStack.length - 1) {
         return
       }
 
-      beginOperation()
-      setStack(currentStack.slice(0, index + 1))
+      const removed = currentStack.slice(index + 1)
+      updateStack(currentStack.slice(0, index + 1))
+      dismissLayers(removed)
     },
-    [beginOperation],
+    [dismissLayers, updateStack],
   )
 
   useImperativeHandle(
@@ -377,13 +570,27 @@ export function useDrawerController<TLayer extends DrawerLayerBase<any>>(
     [open, push, pop, close],
   )
 
+  const isOpen = stack.length > 0
+
   useEffect(() => {
-    if (!isBrowser() || stack.length === 0) {
+    if (!isBrowser() || !isOpen) {
       return
     }
 
+    const keyboardOwner = {}
+    activeKeyboardOwners.push(keyboardOwner)
+
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Only the top-most open drawer responds to keyboard events.
+      if (activeKeyboardOwners[activeKeyboardOwners.length - 1] !== keyboardOwner) {
+        return
+      }
+
       if (event.key === 'Escape') {
+        if (!closeOnEscapeRef.current || event.defaultPrevented || event.isComposing) {
+          return
+        }
+
         event.preventDefault()
         pop()
         return
@@ -397,25 +604,70 @@ export function useDrawerController<TLayer extends DrawerLayerBase<any>>(
     document.addEventListener('keydown', handleKeyDown)
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
+      const ownerIndex = activeKeyboardOwners.indexOf(keyboardOwner)
+      if (ownerIndex >= 0) {
+        activeKeyboardOwners.splice(ownerIndex, 1)
+      }
     }
-  }, [stack.length, pop])
+  }, [isOpen, pop])
 
   useEffect(() => {
-    if (stack.length === 0) {
+    if (!isOpen) {
       return
     }
 
     return lockBodyScroll()
-  }, [stack.length])
+  }, [isOpen])
+
+  // Runs after the "drawer closed" commit: every effect cleanup (including
+  // background inert removal) has run by the time this setup executes.
+  useEffect(() => {
+    if (isOpen || !pendingRestoreRef.current) {
+      return
+    }
+
+    restoreFocus(pendingRestoreRef.current)
+    pendingRestoreRef.current = null
+  }, [isOpen])
+
+  const top = stack[stack.length - 1] ?? null
+
+  // Move focus into the newly revealed top layer after push/pop/navigateTo.
+  // (The initial open is handled by revealPanel.)
+  useEffect(() => {
+    const previousTop = prevTopRef.current
+    prevTopRef.current = top
+
+    if (!isBrowser() || !top || previousTop === null || previousTop === top) {
+      return
+    }
+
+    if (!visibleRef.current) {
+      return
+    }
+
+    const panel = panelNodeRef.current
+    if (panel) {
+      focusInitialTarget(panel, top.initialFocus)
+    }
+  }, [top])
 
   useEffect(() => {
     return () => {
       operationIdRef.current += 1
       clearScheduledWork()
+      // Unmounting while open: put focus back where it came from. Deferred a
+      // microtask so it runs after the whole unmount commit (and after any
+      // background `inert` has been removed).
+      const target = restoreFocusRef.current
+      restoreFocusRef.current = null
+      if (target && isBrowser()) {
+        queueMicrotask(() => restoreFocus(target))
+      }
     }
   }, [clearScheduledWork])
 
-  const top = stack[stack.length - 1] ?? null
+  const headerShown = top ? (top.showHeader ?? true) : true
 
   return {
     stack,
@@ -429,7 +681,9 @@ export function useDrawerController<TLayer extends DrawerLayerBase<any>>(
     dialogProps: {
       role: 'dialog',
       'aria-modal': true,
-      'aria-labelledby': titleId,
+      // With a hidden header the title element does not exist, so labelling
+      // falls back to aria-label instead of a dangling aria-labelledby id.
+      ...(headerShown ? { 'aria-labelledby': titleId } : { 'aria-label': top?.title }),
       'aria-describedby': contentId,
       tabIndex: -1,
     },

@@ -1,4 +1,4 @@
-﻿import { createDrawerClasses } from '@jslibkit/common-drawer'
+import { createDrawerClasses } from '@jslibkit/react-common-drawer'
 
 export const drawerTheme = createDrawerClasses('tailwind', {
   panelLg: 'max-w-3xl',
